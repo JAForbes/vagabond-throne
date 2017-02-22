@@ -1,49 +1,35 @@
 /* globals downplay */
 const merge = Object.assign
 
-Function.prototype.map = function map(g){
-  const f = this
+function Move(state, { velocity:v, coords:p, acceleration:a, id }){
+
   
-  return function map_g(...args){
-    return g(f(...args))
-  }
-}
-
-Array.prototype.flatMap = function(f){
-  return this.map( (v) => f(v) )
-  .reduce( (p,n) => p.concat(n) )
-}
-
-function Move({ velocity:v, coords:p, acceleration:a, id }){
-
-    return [
-      { action: 'UpdateComponent'
-      , component: { x: v.x + a.x, y: v.y + a.y }
-      , type: 'Velocity'
-      , id
-      }
-      ,{ action: 'UpdateComponent'
-      , component: { x: 0, y: 0 }
-      , type: 'Acceleration'
-      , id
-      }
-      ,{ action: 'UpdateComponent'
-      , component: { x: p.x + v.x, y: p.y + v.y }
-      , type: 'Coords'
-      , id
-      }
-    ]
-}
-
-function AirDrag({ velocity:v, id}){
-  
-  return [
-    { action: 'UpdateComponent'
-    , component: { x: v.x, y: v.y }
-    , type: 'Velocity'
-    , id
+  // james: this would be a lot nicer if I had access to lenses
+  // james: but I'm trying to just stick with vanilla js for a while
+  // james: to avoid getting bogged down in "perfect project" paralysis
+  return merge(
+    state, {
+      Velocity: merge( state.Velocity || {}, {
+        [id]: { x: v.x + a.x, y: v.y + a.y }
+      })
+      ,Acceleration: merge( state.Acceleration || {}, {
+        [id]: { x: 0, y: 0 }
+      })
+      ,Coords: merge( state.Coords || {}, {
+        [id]: { x: p.x + v.x, y: p.y + v.y }
+      })
     }
-  ]
+  )
+}
+
+function AirDrag(state, { x=1,y=1, velocity:v, id}){
+  
+  return merge( state, {
+    Velocity: merge(state.merge || {}, {
+      
+      [id]: { x: v.x * x, y: v.y * y }
+    })
+  })
 }
 
 function Frame( { 
@@ -68,20 +54,17 @@ function Frame( {
         Object.keys( Velocity )
           .map(function(id){
 
-            const velocity = Velocity[id]
-            const coords = Coords[id]
-            const acceleration = Acceleration[id]
-
-            return { action: 'Move', coords, velocity, acceleration, id }
+            return { action: 'Move', id }
           })
       )
       .concat(    
         Object.keys( AirDrag )
           .map(function(id){
 
+            const component = AirDrag[id]
             const velocity = Velocity[id]
             
-            return { action: 'AirDrag', velocity, id }
+            return merge({ action: 'AirDrag', id }, component)
           })
       )
 }
@@ -117,32 +100,27 @@ function update( state, action ){
     })
   } else if ( action.action == 'AirDrag' ){
     
+    const velocity = state.Velocity[action.id]
+    
     return merge(state, {
       actions: state.actions.concat(
-        AirDrag(action)
+        AirDrag( state, Object.assign( action, {velocity}) )
       )
     })
     
   } else if ( action.action == 'Move' ){
     
+    
+    const velocity = state.Velocity[action.id]
+    const coords = state.Coords[action.id]
+    const acceleration = state.Acceleration[action.id]
+
     return merge(state, {
       actions: state.actions.concat(
-        Move(action)
+        Move( state, Object.assign(action, { coords, velocity, acceleration }))
       )
     })
     
-  } else if (action.action == 'UpdateComponent'){
-    
-    const { component, type, id } = action
-
-    return merge(
-      state
-      ,{ [type]: 
-        merge( state[type], {
-          [id]: merge( state[type][id], component )
-        })
-      }
-    )
   }
   
   return state
@@ -164,12 +142,12 @@ name: 'Level 01'
     ,Coords: { x: x * 10, y: y * 10 }
     ,Acceleration: { x:0, y: 0 }
     ,Velocity: { x:0, y:0 }
-    ,AirDrag: {}
+    ,AirDrag: { x: 0.95, y: 0.95 }
     ,Input: {
-      Left: { Acceleration: { x: -1 } }
-      ,Right: { Acceleration: { x: 1 } }
-      ,Up: { Acceleration: { y: -1 } }
-      ,Down: { Acceleration: { y: 1 } }
+      Left: { Acceleration: { x: -0.1 } }
+      ,Right: { Acceleration: { x: 0.1 } }
+      ,Up: { Acceleration: { y: -0.1 } }
+      ,Down: { Acceleration: { y: 0.1 } }
     }
   })
   
@@ -219,54 +197,6 @@ downplay(level.data)
   })
 
 document.body.appendChild( CanvasLoop() )
-// DOMLoop()
-
-function DOMLoop(){
-  const nodes = {}
-  
-  function loop(){
-    state.actions.push(
-      { action: 'ClearScreen' }
-      ,{ action: 'Frame' }
-    )
-
-    var action;
-    while ( action = state.actions.shift() ){
-      state = update(state, action)
-
-      if( action.action == 'ClearScreen'){
-        Object.keys(nodes)
-          .forEach(function(id){
-            if( state.CanvasRender && !state.CanvasRender[id] ){
-               nodes[id].remove()
-               delete nodes[id]
-            }
-          })
-      } else if( action.action == 'CanvasRender') {
-        const id = action.id
-        
-        if( !nodes[id] ){
-          nodes[id] = document.createElement('div')
-          document.body.appendChild(nodes[id])
-        }
-        
-        if( action.type == 'fillRect' ){
-          const [x,y,w,h] = action.args
-          
-          const div = nodes[id]
-          div.style.width = w+'px'
-          div.style.height = h+'px'
-          div.style.position = 'absolute'
-          div.style.transform = 'translate('+x+'px,'+y+'px)'
-          div.style.backgroundColor = action.fillStyle
-        }
-      }
-    }
-    
-    requestAnimationFrame(loop)
-  }
-  loop()
-}
 
 function CanvasLoop(){
   const canvas = document.createElement('canvas')
