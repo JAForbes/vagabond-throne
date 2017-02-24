@@ -3,10 +3,6 @@ const merge = Object.assign
 
 function Move(state, { velocity:v, coords:p, acceleration:a, id }){
 
-  
-  // james: this would be a lot nicer if I had access to lenses
-  // james: but I'm trying to just stick with vanilla js for a while
-  // james: to avoid getting bogged down in "perfect project" paralysis
   return merge(
     state, {
       Velocity: merge( state.Velocity || {}, {
@@ -32,23 +28,21 @@ function AirDrag(state, { x=1,y=1, velocity:v, id}){
   })
 }
 
-function Frame( { 
+function Frame(state, { 
   RenderFlat={}
   , Coords={}
   , Dimensions={}
   , Velocity={}
   , Acceleration={} 
   , AirDrag={}
+  , Collideable={}
 }){
   
-  return Object.keys( RenderFlat )
+  return merge(state, {
+    actions: state.actions.concat(
+      Object.keys( RenderFlat )
       .map(function(id){
-
-        const coords = Coords[id]
-        const dimensions = Dimensions[id]
-        const render = RenderFlat[id]
-
-        return { action: 'RenderFlat', coords, dimensions, render, id }
+        return { action: 'RenderFlat', id }
       })
       .concat(    
         Object.keys( Velocity )
@@ -62,51 +56,109 @@ function Frame( {
           .map(function(id){
 
             const component = AirDrag[id]
-            const velocity = Velocity[id]
             
             return merge({ action: 'AirDrag', id }, component)
           })
       )
+      .concat(
+        { action: 'Collideable' }
+      )
+    )
+  })
 }
 
-function RenderFlat({ coords, dimensions, render: { color }, id}){
-    
-    return [
-      { fillStyle: color 
-      , args: [coords.x, coords.y, dimensions.x, dimensions.y]
-      , type: 'fillRect' 
-      , action: 'CanvasRender'
-      , id
-      } 
-    ]
+function RenderFlat(state, { coords, dimensions, render: { color }, id}){
+  
+    return merge(state, { 
+      actions: state.actions.concat([
+        { fillStyle: color 
+        , args: [coords.x, coords.y, dimensions.x, dimensions.y]
+        , type: 'fillRect' 
+        , action: 'CanvasRender'
+        , id
+        }
+      ]) 
+    })
+}
+
+function Collideable(state){
+  
+  const collisions =
+    Object.keys(state.Collideable || {})
+      .reduce(function(p, a){
+
+        return Object.keys( state.Collideable[a].is )
+          .reduce(function(p, Type){
+
+            return Object.keys(state[Type]).reduce(function(p, b){
+              if( a != b && !p[a+':'+b] && !p[b+':'+a] ){
+
+                const { x: aW, y: aH } = state.Dimensions[a]
+                const { x: bW, y: bH } = state.Dimensions[b]
+                const { x: aX, y: aY } = state.Coords[a]
+                const { x: bX, y: bY } = state.Coords[b]
+
+                const [TOP, LEFT, BOTTOM, RIGHT] = [aY, aX, aY+aH, aX + aW]
+                const [top, left, bottom, right] = [bY, bX, bY+bH, bX + bW]
+
+                const outside = 
+                  RIGHT < left
+                  || BOTTOM < top
+                  || TOP > bottom
+                  || LEFT > right
+
+                const processed = 
+                   { [a+':'+b]: true }
+
+                const collisions = 
+                  outside
+                  ? {}
+                  : processed
+                
+                return merge( 
+                  p, {  
+                    processed: merge( p.processed, processed )
+                    ,collisions: merge( p.collisions, collisions )
+                  } 
+                )
+              } else {
+                return p
+              }
+
+            }, p)
+
+            return p
+          }, p)
+
+
+        return p
+
+      }, { processed: {}, collisions: {} })
+  
+  return merge(state, {
+      actions: state.actions.concat([])
+  })
 }
 
 function update( state, action ){
   
   if( action.action == 'Frame' ){
     
-    return merge(state, {
-      actions: state.actions.concat(
-        Frame(state)
-      )
-    })
+    return Frame(state, state)
     
   } else if( action.action == 'RenderFlat' ){
     
-    return merge(state, { 
-      actions: state.actions.concat(
-        RenderFlat(action)
-      ) 
-    })
+    const id = action.id
+    const coords = state.Coords[id]
+    const dimensions = state.Dimensions[id]
+    const render = state.RenderFlat[id]
+
+    return RenderFlat( state, merge(action, { coords, dimensions, render }) )
   } else if ( action.action == 'AirDrag' ){
     
     const velocity = state.Velocity[action.id]
     
-    return merge(state, {
-      actions: state.actions.concat(
-        AirDrag( state, Object.assign( action, {velocity}) )
-      )
-    })
+    return AirDrag( state, Object.assign( action, {velocity}) )
     
   } else if ( action.action == 'Move' ){
     
@@ -115,12 +167,14 @@ function update( state, action ){
     const coords = state.Coords[action.id]
     const acceleration = state.Acceleration[action.id]
 
-    return merge(state, {
-      actions: state.actions.concat(
-        Move( state, Object.assign(action, { coords, velocity, acceleration }))
-      )
-    })
+    return Move( state, merge(action, { coords, velocity, acceleration }))
     
+  } else if ( action.action == 'Collideable' ){
+    
+    const id = action.id
+    const collideable = state.Collideable[id]
+    
+    return Collideable( state, { collideable, id, state })
   }
   
   return state
@@ -149,6 +203,20 @@ name: 'Level 01'
       ,Up: { Acceleration: { y: -0.1 } }
       ,Down: { Acceleration: { y: 0.1 } }
     }
+    ,Player: {}
+    ,Collideable: {
+      against: {}
+      ,is: {
+        Floor: {
+          RenderFlat: { color: 'red' }
+        }
+      }
+      ,was: {
+        Floor: {
+          RenderFlat: { color: 'gray' }
+        }
+      }
+    }
   })
   
   ,'#': ({x,y,w,h,type}) => ({
@@ -157,6 +225,19 @@ name: 'Level 01'
     ,Coords: { x: x * 10, y: y * 10 }
     ,Acceleration: { x:0, y: 0 }
     ,Velocity: { x:0, y:0 }
+  })
+  ,'T': ({x,y,w,h,type}) => ({
+    RenderFlat: { color: 'green' }
+    ,Dimensions: { x: w * 10, y: h * 10  }
+    ,Coords: { x: x * 10, y: y * 10 }
+    ,Acceleration: { x:0, y: 0 }
+    ,Velocity: { x:0, y:0 }
+    ,Floor: {}
+    ,Collideable: {
+      against: {}
+      ,is: {}
+      ,was: {}
+    }
   })
   
   ,'E': ({x,y,w,h,type}) => ({
@@ -173,7 +254,7 @@ name: 'Level 01'
 ## ##           ####        #
 #   #                      ##
 #E  #                     ###
-#####                    ####
+TTTTT                    ####
 
                   ####
 
@@ -181,7 +262,7 @@ name: 'Level 01'
 
      #####
 S    
-###
+TTT
 ` 
 }
 
