@@ -91,7 +91,7 @@ function Collideable(state){
           .reduce(function(p, Type){
 
             return Object.keys(state[Type]).reduce(function(p, b){
-              if( a != b && !p[a+':'+b] ){
+              if( a != b && !p.processed[a+':'+b] ){
 
                 const { x: aW, y: aH } = state.Dimensions[a]
                 const { x: bW, y: bH } = state.Dimensions[b]
@@ -136,7 +136,6 @@ function Collideable(state){
     return function saveMixinA(state, MixinType ){
       var mixin = state.Collideable[a].is[Type][MixinType]
       
-      console.log(MixinType)
       return merge(state, {
         [MixinType]: merge( state[MixinType] || {}, {
          [a]: merge((state[MixinType] || {})[a], mixin)
@@ -146,29 +145,32 @@ function Collideable(state){
   }
   
   function saveAllMixinsForACollisionType(a){
-    return function(state, Type){
+    return function saveAllMixinsForACollisionType_a(state, Type){
       return Object.keys( state.Collideable[a].is[Type] )
         .reduce( saveMixinType(a, Type), state)
     }
   }
   
   function typeExistsInState(state, b){
-    return function Type(Type){
+    return function typeExistsInStateType(Type){
       return b in state[Type]
     }
   }
   
   function mixinAllApplicableTypesFromCollision(state, [a,b]){
-      
       return Object.keys(state.Collideable[a].is)
         .filter(typeExistsInState(state, b))
         .reduce(saveAllMixinsForACollisionType(a), state)
   }
   
-  return Object.keys(collisions.collisions)
+  const mixedInIsState = 
+    Object.keys(collisions.collisions)
     .map( k => k.split(':') )
     .reduce(mixinAllApplicableTypesFromCollision, state)
   
+  
+  
+  return state
   
 }
 
