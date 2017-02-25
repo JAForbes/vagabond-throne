@@ -36,6 +36,7 @@ function Frame(state, {
   , Acceleration={} 
   , AirDrag={}
   , Collideable={}
+  , Decollide={}
 }){
   
   return merge(state, {
@@ -61,6 +62,12 @@ function Frame(state, {
           })
       )
       .concat(
+        Object.keys( Decollide )
+        .map(function(id){
+          return { action: 'Decollide', id }
+        })
+      )
+      .concat(
         { action: 'Collideable' }
       )
     )
@@ -81,8 +88,47 @@ function RenderFlat(state, { coords, dimensions, render: { color }, id}){
     })
 }
 
-function Collideable(state){
+function Decollide(state, {collideable, id}){
+ 
+  const oldCoords = state.Coords[id]
   
+  const adjustment = 
+    Object.keys(collideable.against)
+    .reduce(function(p, id){
+      const r = collideable.against[id]
+      
+      return {
+        x:  Math.abs(p.x) >= Math.abs(r.x) ? p.x : r.x
+        ,y: Math.abs(p.y) >= Math.abs(r.y) ? p.y : r.y
+      }
+    }, { x:0 , y:0 })
+
+  
+  const coords = 
+
+      // *2 = 
+      // 1 to counter our continuing velocity that will still be applied
+      // 1 to reverse how much we've already moved into the other entity
+      { x: oldCoords.x + adjustment.x * 2
+      , y: oldCoords.y + adjustment.y * 2
+      }
+  
+  return merge(state, {
+    Decollide: Object.keys(state.Decollide)
+      .reduce(function(p, id2){
+        return id == id2
+          ? p
+          : merge(p, {[id2]: state.Decollide[id2]} )
+      }, {})
+    
+    ,Coords: merge(state.Coords, {
+      [id]: coords
+    })
+  })
+  
+}
+
+function Collideable(state){
   const collisions =
     Object.keys(state.Collideable || {})
       .reduce(function(p, a){
@@ -92,33 +138,89 @@ function Collideable(state){
 
             return Object.keys(state[Type]).reduce(function(p, b){
               if( a != b && !p.processed[a+':'+b] ){
+                
+                const V = state.Velocity[a] || { x:0, y:0 }
+                const v = state.Velocity[b] || { x:0, y:0 }
+                const { x: WIDTH, y: HEIGHT } = state.Dimensions[a]
+                const { x: width, y: height } = state.Dimensions[b]
+                const { x: LEFT, y: TOP } = state.Coords[a]
+                const { x: left, y: top } = state.Coords[b]
+                
+                const [BOTTOM, RIGHT] = [TOP + HEIGHT, LEFT + WIDTH]
+                const [bottom, right] = [top + height, left + width]
 
-                const { x: aW, y: aH } = state.Dimensions[a]
-                const { x: bW, y: bH } = state.Dimensions[b]
-                const { x: aX, y: aY } = state.Coords[a]
-                const { x: bX, y: bY } = state.Coords[b]
-
-                const [TOP, LEFT, BOTTOM, RIGHT] = [aY, aX, aY+aH, aX + aW]
-                const [top, left, bottom, right] = [bY, bX, bY+bH, bX + bW]
+                const [ON_RIGHT, ABOVE, BELOW, ON_LEFT] = 
+                  [ RIGHT < left
+                  , BOTTOM < top
+                  , TOP > bottom
+                  , LEFT > right
+                  ]
+                
+                // *2 = 
+                // 1 to counter our continuing velocity that will still be applied
+                // 1 to reverse how much we've already moved into the other entity
+                const [WAS_LEFT, WAS_ABOVE, WAS_RIGHT, WAS_BELOW] =
+                  [ (RIGHT - V.x * 2) < (left - v.x * 2)
+                  , (BOTTOM - V.y * 2) < (top - v.y * 2)
+                  , (LEFT - V.x * 2) > (right - v.x * 2)
+                  , (TOP - V.y * 2) > (bottom - v.y * 2)
+                  ]
 
                 const outside = 
-                  RIGHT < left
-                  || BOTTOM < top
-                  || TOP > bottom
-                  || LEFT > right
-
-                const processed = 
-                   { [a+':'+b]: true, [b+':'+a]: true }
-
+                  ON_RIGHT
+                  || ABOVE
+                  || BELOW
+                  || ON_LEFT
+                
                 const collisions = 
                   outside
                   ? {}
-                  : processed
+                  :{ 
+                    [a+':'+b]: 
+                      { x: WAS_RIGHT
+                         ? right - LEFT
+                         : WAS_LEFT
+                         ? left - RIGHT
+                         : 0
+                      , y: WAS_BELOW 
+                         ? bottom - TOP
+                         : WAS_ABOVE
+                         ? -(BOTTOM - top)
+                         : 0
+                      }
+                  
+                  
+                  , [b+':'+a]: 
+                      { x: WAS_RIGHT
+                         ? -(right - LEFT)
+                         : WAS_LEFT
+                         ? -(left - RIGHT)
+                         : 0
+                      , y: WAS_BELOW 
+                         ? -(bottom - TOP)
+                         : WAS_ABOVE
+                         ? -(BOTTOM - top)
+                         : 0
+                      }
+                  }
                 
+                const processed = 
+                   { [a+':'+b]: true
+                   , [b+':'+a]: true
+                   }
+              
+                
+                const decollisions =
+                  outside && state.Collideable[a].against[b]
+                  ? processed
+                  : {}
+                
+
                 return merge( 
                   p, {  
                     processed: merge( p.processed, processed )
                     ,collisions: merge( p.collisions, collisions )
+                    ,decollisions: merge( p.decollisions, decollisions)
                   } 
                 )
               } else {
@@ -129,25 +231,25 @@ function Collideable(state){
 
           }, p)
 
-      }, { processed: {}, collisions: {} })
+      }, { processed: {}, collisions: {}, decollisions: {} })
   
   
-  function saveMixinType(a, Type){
+  function saveMixinType(a, tense, Type){
     return function saveMixinA(state, MixinType ){
-      var mixin = state.Collideable[a].is[Type][MixinType]
+      var mixin = state.Collideable[a][tense][Type][MixinType]
       
       return merge(state, {
         [MixinType]: merge( state[MixinType] || {}, {
-         [a]: merge((state[MixinType] || {})[a], mixin)
+         [a]: merge((state[MixinType] || {})[a] || {}, mixin)
         })
       })  
     }
   }
   
-  function saveAllMixinsForACollisionType(a){
+  function saveAllMixinsForACollisionType(tense, a){
     return function saveAllMixinsForACollisionType_a(state, Type){
-      return Object.keys( state.Collideable[a].is[Type] )
-        .reduce( saveMixinType(a, Type), state)
+      return Object.keys( state.Collideable[a][tense][Type] )
+        .reduce( saveMixinType(a, tense, Type), state)
     }
   }
   
@@ -157,20 +259,69 @@ function Collideable(state){
     }
   }
   
-  function mixinAllApplicableTypesFromCollision(state, [a,b]){
-      return Object.keys(state.Collideable[a].is)
+  
+  function mixinAllApplicableTypesFromCollision(tense){
+    return function mixinAllApplicableTypesFromCollisionTense(state, [a,b]){
+      return Object.keys(state.Collideable[a][tense])
         .filter(typeExistsInState(state, b))
-        .reduce(saveAllMixinsForACollisionType(a), state)
+        .reduce(saveAllMixinsForACollisionType(tense, a), state) 
+    }
+  }
+  
+  function manageAgainstHash(collisions){
+    return function manageAgainstHashCollisions(state, id){
+      
+      return Object.keys( collisions.collisions )
+        .concat( Object.keys( collisions.decollisions ))
+        .reduce(function(state, key){
+          const [a,b] = key.split(':')
+          
+          if(key in collisions.collisions  ){
+            return merge(state, {
+              Collideable: merge( state.Collideable, {
+                [a]: merge( state.Collideable[a], {
+                   against: merge( 
+                     state.Collideable[a].against
+                     , { [b]: collisions.collisions[a+':'+b] } 
+                   )
+                })
+              })
+            })  
+          } else {
+            return merge(state, {
+              Collideable: merge( state.Collideable, {
+                [a]: merge(state.Collideable[a], {
+                  against: Object.keys(state.Collideable[a].against)
+                    .reduce(function(p,b2){
+                        return b != b2
+                          ? merge(p, { [b2]: state.Collideable[a].against[b] } )
+                          : p
+                    }, {})
+                })
+              })
+            })
+            return state
+          }
+          
+        }, state)
+      
+      return state  
+    }
   }
   
   const mixedInIsState = 
     Object.keys(collisions.collisions)
     .map( k => k.split(':') )
-    .reduce(mixinAllApplicableTypesFromCollision, state)
+    .reduce(mixinAllApplicableTypesFromCollision('is'), state)
   
   
+  const mixedInWasState = 
+    Object.keys(collisions.decollisions)
+    .map( k => k.split(':') )
+    .reduce( mixinAllApplicableTypesFromCollision('was'), mixedInIsState )
   
-  return state
+  return Object.keys( state.Collideable )
+    .reduce( manageAgainstHash(collisions), mixedInWasState )
   
 }
 
@@ -209,6 +360,11 @@ function update( state, action ){
     const collideable = state.Collideable[id]
     
     return Collideable( state, { collideable, id, state })
+    
+  } else if (action.action == 'Decollide'){
+    
+    const collideable = state.Collideable[action.id]
+    return Decollide( state, Object.assign( action , { collideable }) )
   }
   
   return state
@@ -242,14 +398,10 @@ name: 'Level 01'
       against: {}
       ,is: {
         Floor: {
-          RenderFlat: { color: 'red' }
+          Decollide: {}
         }
       }
-      ,was: {
-        Floor: {
-          RenderFlat: { color: 'gray' }
-        }
-      }
+      ,was: {}
     }
   })
   
@@ -288,15 +440,16 @@ name: 'Level 01'
 ## ##           ####        #
 #   #                      ##
 #E  #                     ###
-TTTTT                    ####
+#####                    ####
 
                   ####
 
            ####
 
-     #####
-S    
-TTT
+     TTTTT
+S
+
+#####
 ` 
 }
 
