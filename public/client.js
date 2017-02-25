@@ -294,7 +294,7 @@ function Collideable(state){
                   against: Object.keys(state.Collideable[a].against)
                     .reduce(function(p,b2){
                         return b != b2
-                          ? merge(p, { [b2]: state.Collideable[a].against[b] } )
+                          ? merge(p, { [b2]: state.Collideable[a].against[b2] } )
                           : p
                     }, {})
                 })
@@ -437,19 +437,19 @@ name: 'Level 01'
 }
 ,data:
 `
-## ##           ####        #
-#   #                      ##
-#E  #                     ###
-#####                    ####
+TT TT          TTTTT        T
+T   T                      TT
+TE  T                     TTT
+TTTTT                    TTTT
 
-                  ####
+                  TTTTT
 
-           ####
+           TTTT
 
      TTTTT
 S
 
-#####
+TTTT
 ` 
 }
 
